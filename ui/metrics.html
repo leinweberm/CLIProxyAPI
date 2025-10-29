@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>QuantumSpring - Metrics UI</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            width: 100vw;
+            height: 100dvh;
+            margin: 0;
+            padding: 0;
+            background: #e6e6e6;
+        }
+        main {
+            height: calc(100dvh - 40px);
+            width: calc(100vw - 40px);
+            margin: 20px;
+            padding: 20px;
+            background: white;
+            display: grid;
+            grid-template-areas:
+                "modelRequest modelToken"
+                "timeserie timeserie";
+            gap: 20px;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            border-radius: 20px;
+            overflow: hidden;
+        }
+        #modelRequest, #modelToken, #timeserie {
+            padding: 10px;
+            justify-content: center;
+            align-items: center;
+            border: 1px solid silver;
+            border-radius: 10px;
+            display: flex;
+            position: relative;
+            min-width: 0;
+            min-height: 0;
+        }
+        #modelRequest {
+            grid-area: modelRequest;
+        }
+        #modelToken {
+            grid-area: modelToken;
+        }
+        #timeserie {
+            grid-area: timeserie;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        const initUI = async () => {
+            const fetchUrl = `${window.location.origin}/_qs/metrics`;
+            const response = await fetch(fetchUrl);
+            const data = await response.json();
+
+            const modelRequestContext = document.querySelector('#modelRequestChart');
+            const modelRequestChartData = {
+                type: 'pie',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Models Requests',
+                        data: [],
+                        hoverOffset: 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            };
+
+            const modelTokenContext = document.querySelector('#modelTokenChart');
+            const modelTokenChartData = {
+                type: 'pie',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Models Token Usage',
+                        data: [],
+                        hoverOffset: 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            };
+
+            data.by_model.forEach((modelData) => {
+                modelTokenChartData.data.labels.push(modelData.model);
+                modelTokenChartData.data.datasets[0].data.push(modelData.tokens);
+                modelRequestChartData.data.labels.push(modelData.model);
+                modelRequestChartData.data.datasets[0].data.push(modelData.requests);
+            });
+
+            const timeserieContext = document.querySelector('#timeserieChart');
+            const timeserieChartData = {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Tokens', data: [] },
+                        { label: 'Requests', data: [] }
+                    ]
+                }
+            };
+            data.timeseries.forEach((timeserie) => {
+                timeserieChartData.data.labels.push(new Date(timeserie.bucket_start).toLocaleString());
+                timeserieChartData.data.datasets[0].data.push(timeserie.tokens);
+                timeserieChartData.data.datasets[1].data.push(timeserie.requests);
+            });
+
+            const modelRequestChart = new Chart(modelRequestContext, modelRequestChartData);
+            const modelTokenChart = new Chart(modelTokenContext, modelTokenChartData);
+            const timeserieChart = new Chart(timeserieContext, timeserieChartData);
+           
+        };
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initUI();
+        });
+    </script>
+</head>
+<body>
+    <main>
+        <div id="modelRequest">
+            <canvas id="modelRequestChart"></canvas>
+        </div>
+        <div id="modelToken">
+            <canvas id="modelTokenChart"></canvas>
+        </div>
+        <div id="timeserie">
+            <canvas id="timeserieChart"></canvas>
+        </div>
+    </main>
+</body>
+</html>

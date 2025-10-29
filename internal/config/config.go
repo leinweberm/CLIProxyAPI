@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	"golang.org/x/crypto/bcrypt"
@@ -60,6 +61,15 @@ type Config struct {
 
 	// RemoteManagement nests management-related options under 'remote-management'.
 	RemoteManagement RemoteManagement `yaml:"remote-management" json:"-"`
+
+	// MetricsFile is the path to the JSON file where metrics will be stored.
+	MetricsFile string `yaml:"metrics-file,omitempty" json:"metrics-file,omitempty"`
+
+	// LoopDelay is the interval at which metrics are saved to the file.
+	LoopDelay time.Duration `yaml:"loop-delay,omitempty" json:"loop-delay,omitempty"`
+
+	// CrashOnError determines if the application should crash if saving metrics fails.
+	CrashOnError bool `yaml:"crash-on-error,omitempty" json:"crash-on-error,omitempty"`
 }
 
 // RemoteManagement holds management API configuration under 'remote-management'.

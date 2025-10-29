@@ -5,7 +5,10 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -92,6 +95,8 @@ type RequestDetail struct {
 	Source    string     `json:"source"`
 	Tokens    TokenStats `json:"tokens"`
 	Failed    bool       `json:"failed"`
+	RequestID string     `json:"request_id,omitempty"`
+	LatencyMS int64      `json:"latency_ms,omitempty"`
 }
 
 // TokenStats captures the token usage breakdown for a request.
@@ -162,9 +167,24 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	}
 	detail := normaliseDetail(record.Detail)
 	totalTokens := detail.TotalTokens
+	latency := time.Since(record.RequestedAt)
+
 	statsKey := record.APIKey
+	var requestID string
+	if ctx != nil {
+		if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil {
+			if statsKey == "" {
+				statsKey = resolveAPIIdentifier(ginCtx, record)
+			}
+			if id, exists := ginCtx.Get("request_id"); exists {
+				if rid, ok := id.(string); ok {
+					requestID = rid
+				}
+			}
+		}
+	}
 	if statsKey == "" {
-		statsKey = resolveAPIIdentifier(ctx, record)
+		statsKey = resolveAPIIdentifier(nil, record)
 	}
 	failed := record.Failed
 	if !failed {
@@ -199,6 +219,8 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		Source:    record.Source,
 		Tokens:    detail,
 		Failed:    failed,
+		RequestID: requestID,
+		LatencyMS: latency.Milliseconds(),
 	})
 
 	s.requestsByDay[dayKey]++
@@ -279,23 +301,21 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 	return result
 }
 
-func resolveAPIIdentifier(ctx context.Context, record coreusage.Record) string {
-	if ctx != nil {
-		if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil {
-			path := ginCtx.FullPath()
-			if path == "" && ginCtx.Request != nil {
-				path = ginCtx.Request.URL.Path
+func resolveAPIIdentifier(ginCtx *gin.Context, record coreusage.Record) string {
+	if ginCtx != nil {
+		path := ginCtx.FullPath()
+		if path == "" && ginCtx.Request != nil {
+			path = ginCtx.Request.URL.Path
+		}
+		method := ""
+		if ginCtx.Request != nil {
+			method = ginCtx.Request.Method
+		}
+		if path != "" {
+			if method != "" {
+				return method + " " + path
 			}
-			method := ""
-			if ginCtx.Request != nil {
-				method = ginCtx.Request.Method
-			}
-			if path != "" {
-				if method != "" {
-					return method + " " + path
-				}
-				return path
-			}
+			return path
 		}
 	}
 	if record.Provider != "" {
@@ -344,4 +364,131 @@ func formatHour(hour int) string {
 	}
 	hour = hour % 24
 	return fmt.Sprintf("%02d", hour)
+}
+
+// LoadMetricsFromFile reads the specified file and loads the metrics into the default statistics store.
+func LoadMetricsFromFile(filePath string) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return
+	}
+
+	var snapshot StatisticsSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return
+	}
+
+	defaultRequestStatistics.LoadFromSnapshot(&snapshot)
+}
+
+// LoadFromSnapshot populates the in-memory statistics from a snapshot.
+func (s *RequestStatistics) LoadFromSnapshot(snapshot *StatisticsSnapshot) {
+	if s == nil || snapshot == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.totalRequests = snapshot.TotalRequests
+	s.successCount = snapshot.SuccessCount
+	s.failureCount = snapshot.FailureCount
+	s.totalTokens = snapshot.TotalTokens
+	s.requestsByDay = snapshot.RequestsByDay
+	s.tokensByDay = snapshot.TokensByDay
+	s.requestsByHour = make(map[int]int64)
+	s.tokensByHour = make(map[int]int64)
+
+	for hourStr, count := range snapshot.RequestsByHour {
+		hour, _ := strconv.Atoi(hourStr)
+		s.requestsByHour[hour] = count
+	}
+
+	for hourStr, count := range snapshot.TokensByHour {
+		hour, _ := strconv.Atoi(hourStr)
+		s.tokensByHour[hour] = count
+	}
+
+	s.apis = make(map[string]*apiStats)
+	for apiKey, apiSnap := range snapshot.APIs {
+		apiStat := &apiStats{
+			TotalRequests: apiSnap.TotalRequests,
+			TotalTokens:   apiSnap.TotalTokens,
+			Models:        make(map[string]*modelStats),
+		}
+		for modelName, modelSnap := range apiSnap.Models {
+			modelStat := &modelStats{
+				TotalRequests: modelSnap.TotalRequests,
+				TotalTokens:   modelSnap.TotalTokens,
+				Details:       make([]RequestDetail, len(modelSnap.Details)),
+			}
+			copy(modelStat.Details, modelSnap.Details)
+			apiStat.Models[modelName] = modelStat
+		}
+		s.apis[apiKey] = apiStat
+	}
+}
+
+func (s *RequestStatistics) saveSnapshotToFile(filePath string) error {
+	if s == nil {
+		return fmt.Errorf("statistics store is nil")
+	}
+	snapshot := s.Snapshot()
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal metrics snapshot: %w", err)
+	}
+	return os.WriteFile(filePath, data, 0644)
+}
+
+var (
+	shutdownChan = make(chan struct{})
+	wg           sync.WaitGroup
+)
+
+// StartPeriodicSaving starts a background goroutine that periodically saves the
+// current metrics snapshot to the specified file. It also listens for a shutdown
+// signal from StopMetricsPersistence to perform a final save before exiting.
+func StartPeriodicSaving(filePath string, interval time.Duration, crashOnError bool) {
+	if filePath == "" || interval <= 0 {
+		return
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if err := defaultRequestStatistics.saveSnapshotToFile(filePath); err != nil {
+					if crashOnError {
+						panic(fmt.Sprintf("failed to save metrics: %v", err))
+					} else {
+						_, _ = fmt.Fprintf(os.Stderr, "failed to save metrics: %v\n", err)
+					}
+				}
+			case <-shutdownChan:
+				fmt.Println("Shutdown signal received, performing final metrics save...")
+				if err := defaultRequestStatistics.saveSnapshotToFile(filePath); err != nil {
+					_, _ = fmt.Fprintf(os.Stderr, "failed to save final metrics: %v\n", err)
+				}
+				fmt.Println("Final metrics save complete. Exiting persistence goroutine.")
+				return
+			}
+		}
+	}()
+}
+
+// StopMetricsPersistence signals the persistence goroutine to stop and waits for it to finish.
+func StopMetricsPersistence() {
+	select {
+	case <-shutdownChan:
+		return
+	default:
+		close(shutdownChan)
+	}
+	wg.Wait()
 }

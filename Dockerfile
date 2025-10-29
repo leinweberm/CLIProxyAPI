@@ -23,8 +23,11 @@ RUN mkdir /CLIProxyAPI
 COPY --from=builder ./app/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
 
 COPY config.example.yaml /CLIProxyAPI/config.example.yaml
+COPY ui /CLIProxyAPI/ui
 
 WORKDIR /CLIProxyAPI
+
+ENV IN_DOCKER=true
 
 EXPOSE 8317
 

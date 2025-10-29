@@ -80,6 +80,9 @@ func captureRequestInfo(c *gin.Context) (*RequestInfo, error) {
 		headers[key] = values
 	}
 
+	delete(headers, "Authorization")
+	delete(headers, "Cookie")
+
 	// Capture request body
 	var body []byte
 	if c.Request.Body != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
 )
@@ -49,6 +50,9 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 	}
 
 	err = service.Run(runCtx)
+
+	usage.StopMetricsPersistence()
+
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("proxy service exited with error: %v", err)
 	}

@@ -15,6 +15,7 @@ pgstore/*
 gitstore/*
 objectstore/*
 static/*
+metrics.json
 
 # Authentication data
 auths/*

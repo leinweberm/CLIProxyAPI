@@ -85,3 +85,18 @@ ws-auth: false
 #    models: # The models supported by the provider.
 #      - name: "moonshotai/kimi-k2:free" # The actual model name.
 #        alias: "kimi-k2" # The alias used in the API.
+
+# --- Metrics Persistence ---
+#
+# File path for storing metrics periodically.
+# If commented out or empty, defaults to "metrics.json" in the project root.
+# metrics-file: "metrics.json"
+#
+# How often to save metrics to the file.
+# If commented out or empty, defaults to 10m (10 minutes).
+# loop-delay: 10m
+#
+# If true, the application will crash if it fails to save metrics.
+# If false, it will print an error to stderr and continue.
+# Defaults to false.
+# crash-on-error: false

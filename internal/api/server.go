@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/access"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v6/internal/api/handlers/management"
+	metrics "github.com/router-for-me/CLIProxyAPI/v6/internal/api/handlers/metrics"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
@@ -148,6 +149,9 @@ type Server struct {
 	// management handler
 	mgmt *managementHandlers.Handler
 
+	// metrics handler
+	metricsHandler *metrics.Handler
+
 	// managementRoutesRegistered tracks whether the management routes have been attached to the engine.
 	managementRoutesRegistered atomic.Bool
 	// managementRoutesEnabled controls whether management endpoints serve real handlers.
@@ -249,6 +253,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	auth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 	// Initialize management handler
 	s.mgmt = managementHandlers.NewHandler(cfg, configFilePath, authManager)
+	s.metricsHandler = metrics.NewHandler(usage.GetRequestStatistics())
 	if optionState.localPassword != "" {
 		s.mgmt.SetLocalPassword(optionState.localPassword)
 	}
@@ -277,8 +282,13 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	}
 
 	// Create HTTP server
+	bindAddr := "localhost"
+	if os.Getenv("IN_DOCKER") == "true" {
+		bindAddr = "0.0.0.0"
+	}
+
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
+		Addr:    fmt.Sprintf("%s:%d", bindAddr, cfg.Port),
 		Handler: engine,
 	}
 
@@ -324,9 +334,21 @@ func (s *Server) setupRoutes() {
 				"POST /v1/chat/completions",
 				"POST /v1/completions",
 				"GET /v1/models",
+				"GET /_qs/health",
+				"GET /_qs/metrics",
 			},
 		})
 	})
+
+	qs := s.engine.Group("/_qs")
+	{
+		qs.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		})
+		qs.GET("/metrics", s.metricsHandler.GetMetrics)
+		qs.GET("/metrics/ui", s.serveMetricsUI)
+	}
+
 	s.engine.POST("/v1internal:method", geminiCLIHandlers.CLIHandler)
 
 	// OAuth callback endpoints (reuse main server port)
@@ -547,6 +569,11 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		return
 	}
 
+	c.File(filePath)
+}
+
+func (s *Server) serveMetricsUI(c *gin.Context) {
+	filePath := filepath.Join("ui", "metrics.html")
 	c.File(filePath)
 }
 

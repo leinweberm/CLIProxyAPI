@@ -378,6 +378,21 @@ func main() {
 		}
 	}
 	usage.SetStatisticsEnabled(cfg.UsageStatisticsEnabled)
+
+	metricsFile := cfg.MetricsFile
+	if metricsFile == "" {
+		metricsFile = "metrics.json"
+	}
+
+	loopDelay := cfg.LoopDelay
+	if loopDelay == 0 {
+		loopDelay = 10 * time.Minute
+	}
+
+	// Load last saved metrics from file and start periodic save
+	usage.LoadMetricsFromFile(metricsFile)
+	usage.StartPeriodicSaving(metricsFile, loopDelay, cfg.CrashOnError)
+
 	coreauth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 
 	if err = logging.ConfigureLogOutput(cfg.LoggingToFile); err != nil {
